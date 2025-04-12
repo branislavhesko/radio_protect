@@ -7,12 +7,12 @@ import h5py
 
 
 ROI_MAPPING = {
-    "CTV_Low": 1,
-    "CTV_High": 2,
-    "PTV_Low": 3,
-    "PTV_High": 4,
-    "GTV": 5,
-    "Lungs": 6,
+    "Lungs": 1,
+    "CTV_Low": 2,
+    "CTV_High": 3,
+    "PTV_Low": 4,
+    "PTV_High": 5,
+    "GTV": 6,
 }
 
 
@@ -93,47 +93,54 @@ def process_contours(data_path):
 
 def main():
     # Configuration
-    PATIENT = "1"  # You can change this as needed
-    DATA_PATH = f"./data/SAMPLE_00{PATIENT}/"
-    
-    # Process CT volumes
-    print("Processing CT volumes...")
-    volumes = process_ct_volumes(DATA_PATH)
-    
-    # Process contours
-    print("Processing contours...")
-    contours = process_contours(DATA_PATH)
-    
-    # Combine data and save
-    for study_uid, volume_data in volumes.items():
-        # Create masks for each slice
-        masks = np.zeros_like(volume_data['volume'], dtype=np.uint8)
+    for PATIENT in range(1, 8):  # You can change this as needed
+        DATA_PATH = f"./data/SAMPLE_00{PATIENT}/"
+        OUTPUT_PATH = f"./data/OUTPUT_00{PATIENT}/"
+        # Process CT volumes
+        print("Processing CT volumes...")
+        volumes = process_ct_volumes(DATA_PATH)
         
-        # Match contours to slices
-        for i, (slice_uid, image_position, pixel_spacing) in enumerate(zip(
-            volume_data['slice_uids'],
-            volume_data['image_positions'],
-            volume_data['pixel_spacings']
-        )):
-            if slice_uid in contours:
-                single_mask_contours = contours[slice_uid]
-                mask = np.zeros((512, 512), dtype=np.uint8)
+        # Process contours
+        print("Processing contours...")
+        contours = process_contours(DATA_PATH)
+        
+        # Combine data and save
+        try:
+            for study_uid, volume_data in volumes.items():
+                # Create masks for each slice
+                masks = np.zeros_like(volume_data['volume'], dtype=np.uint8)
+                
+                # Match contours to slices
+                for i, (slice_uid, image_position, pixel_spacing) in enumerate(zip(
+                    volume_data['slice_uids'],
+                    volume_data['image_positions'],
+                    volume_data['pixel_spacings']
+                )):
+                    if slice_uid in contours:
+                        single_mask_contours = contours[slice_uid]
+                        mask = np.zeros((512, 512), dtype=np.uint8)
 
-                for contour in single_mask_contours:
-                    points = contour['points']                    
-                    # Convert points from patient coordinates to pixel coordinates
-                    points_2d = patient_to_pixel_coords(points, image_position, pixel_spacing)
-                    print(points_2d.shape)                # Create mask using the converted points
-                    cv2.fillPoly(mask, [points_2d], contour['roi_number'])
-                    masks[i] = mask
-        
-        combined_array = np.stack([volume_data['volume'], masks], axis=-1)
-        
-        # Save combined data in NPY format
-        output_file_npy = f"volume_contours_{PATIENT}_{study_uid}.npy"
-        np.save(output_file_npy, combined_array)
-        
-        print(f"Saved combined data to {output_file_npy}")
+                        for contour in single_mask_contours:
+                            points = contour['points']                    
+                            # Convert points from patient coordinates to pixel coordinates
+                            points_2d = patient_to_pixel_coords(points, image_position, pixel_spacing)
+                            cv2.fillPoly(mask, [points_2d], contour['roi_number'])
+                            masks[i] = mask
+                
+                masks = np.stack(masks, axis=0)
+                combined_array = np.stack([volume_data['volume'], masks], axis=-1)
+                
+                # Save combined data in NPY format
+                output_file_npy = f"volume_contours_{PATIENT}_{study_uid}.npy"
+                if not (masks > 1).sum():
+                    print(f"No masks found for {PATIENT} {study_uid} and masks are {masks.shape}")
+                if not os.path.exists(OUTPUT_PATH):
+                    os.makedirs(OUTPUT_PATH)
+                np.save(os.path.join(OUTPUT_PATH, output_file_npy), combined_array)
+                
+                print(f"Saved combined data to {output_file_npy}")
+        except Exception as e:
+            print(f"Error processing {PATIENT} {study_uid}: {e}")
 
 if __name__ == "__main__":
     main() 
