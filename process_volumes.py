@@ -78,7 +78,7 @@ def process_contours(data_path):
                     if roi.ROINumber == roi_number:
                         roi_name = roi.ROIName
                         break
-                if roi_name != "Lungs":
+                if roi_name not in ROI_MAPPING:
                     continue
                 if hasattr(roi_contour, 'ContourSequence'):
                     for contour in roi_contour.ContourSequence:
