@@ -6,6 +6,17 @@ import cv2
 import h5py
 
 
+ROI_MAPPING = {
+    "CTV_Low": 1,
+    "CTV_High": 2,
+    "PTV_Low": 3,
+    "PTV_High": 4,
+    "GTV": 5,
+    "Lungs": 6,
+}
+
+
+
 def process_ct_volumes(data_path):
     """Process CT volumes and return organized volume data."""
     dcms = glob.glob(os.path.join(data_path, "*.dcm"))
@@ -15,12 +26,14 @@ def process_ct_volumes(data_path):
     for c in cts:
         dcm = pydicom.dcmread(c)
         if np.array(dcm.pixel_array).shape == (512, 512):
-            if dcm.StudyInstanceUID not in study_images:
-                study_images[dcm.StudyInstanceUID] = []
-            study_images[dcm.StudyInstanceUID].append({
+            if dcm.SeriesInstanceUID not in study_images:
+                study_images[dcm.SeriesInstanceUID] = []
+            study_images[dcm.SeriesInstanceUID].append({
                 'pixel_array': np.array(dcm.pixel_array),
                 'z_position': dcm.ImagePositionPatient[2],
-                'slice_uid': dcm.SOPInstanceUID
+                'slice_uid': dcm.SOPInstanceUID,
+                'image_position': dcm.ImagePositionPatient,
+                'pixel_spacing': dcm.PixelSpacing
             })
     
     processed_volumes = {}
@@ -32,10 +45,25 @@ def process_ct_volumes(data_path):
         processed_volumes[study_uid] = {
             'volume': volume,
             'slice_uids': slice_uids,
-            'z_positions': [x['z_position'] for x in sorted_slices]
+            'z_positions': [x['z_position'] for x in sorted_slices],
+            'image_positions': [x['image_position'] for x in sorted_slices],
+            'pixel_spacings': [x['pixel_spacing'] for x in sorted_slices]
         }
     
     return processed_volumes
+
+def patient_to_pixel_coords(points, image_position, pixel_spacing):
+    """Convert points from patient coordinates to pixel coordinates."""
+    # Convert to pixel coordinates
+    j = (points[:, 0] - image_position[0]) / pixel_spacing[1]
+    i = (points[:, 1] - image_position[1]) / pixel_spacing[0]  
+    
+    # Round to nearest integer and clip to image bounds
+    i = np.clip(np.round(i), 0, 511).astype(int)
+    j = np.clip(np.round(j), 0, 511).astype(int)
+    
+    return np.column_stack((j, i))
+
 
 def process_contours(data_path):
     """Process contour data and return organized contour information."""
@@ -50,14 +78,17 @@ def process_contours(data_path):
                     if roi.ROINumber == roi_number:
                         roi_name = roi.ROIName
                         break
-                
+                if roi_name != "Lungs":
+                    continue
                 if hasattr(roi_contour, 'ContourSequence'):
                     for contour in roi_contour.ContourSequence:
-                        contour_data[contour.ContourImageSequence[0].ReferencedSOPInstanceUID] = {
+                        if not contour.ContourImageSequence[0].ReferencedSOPInstanceUID in contour_data:
+                            contour_data[contour.ContourImageSequence[0].ReferencedSOPInstanceUID] = []
+                        contour_data[contour.ContourImageSequence[0].ReferencedSOPInstanceUID].append({
                             'points': np.array(contour.ContourData).reshape(-1, 3),
                             'roi_name': roi_name,
-                            'roi_number': roi_number
-                        }
+                            'roi_number': ROI_MAPPING[roi_name]
+                        })
     return contour_data
 
 def main():
@@ -79,14 +110,22 @@ def main():
         masks = np.zeros_like(volume_data['volume'], dtype=np.uint8)
         
         # Match contours to slices
-        for i, slice_uid in enumerate(volume_data['slice_uids']):
+        for i, (slice_uid, image_position, pixel_spacing) in enumerate(zip(
+            volume_data['slice_uids'],
+            volume_data['image_positions'],
+            volume_data['pixel_spacings']
+        )):
             if slice_uid in contours:
-                points = contours[slice_uid]['points']
+                single_mask_contours = contours[slice_uid]
                 mask = np.zeros((512, 512), dtype=np.uint8)
-                points_2d = points[:, :2]
-                points_2d = ((points_2d - points_2d.min()) * (511 / (points_2d.max() - points_2d.min()))).astype(int)
-                cv2.fillPoly(mask, [points_2d], 1)
-                masks[i] = mask
+
+                for contour in single_mask_contours:
+                    points = contour['points']                    
+                    # Convert points from patient coordinates to pixel coordinates
+                    points_2d = patient_to_pixel_coords(points, image_position, pixel_spacing)
+                    print(points_2d.shape)                # Create mask using the converted points
+                    cv2.fillPoly(mask, [points_2d], contour['roi_number'])
+                    masks[i] = mask
         
         combined_array = np.stack([volume_data['volume'], masks], axis=-1)
         

@@ -1,2 +1,5 @@
 data/
 volume.npy
+*.npy
+*.h5
+*.tif
