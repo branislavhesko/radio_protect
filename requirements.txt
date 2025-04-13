@@ -1,0 +1,4 @@
+simpleitk
+numpy
+matplotlib
+napari

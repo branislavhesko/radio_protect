@@ -3,3 +3,4 @@ volume.npy
 *.npy
 *.h5
 *.tif
+__pycache__/stpyvista_example.cpython-312.pyc
